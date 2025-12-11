@@ -33,7 +33,7 @@ pub fn required_channels() -> Vec<String> {
         let channels: Vec<String> = val
             .split(|c: char| c == ',' || c == ';' || c.is_whitespace())
             .map(|c| {
-                c.trim_matches(|ch| ch == '\"' || ch == '\'' || ch == '\r')
+                c.trim_matches(|ch| ch == '\"' || ch == '\'' || ch == '\r' || ch == '\u{feff}')
                     .trim()
             })
             .filter(|c| !c.is_empty())

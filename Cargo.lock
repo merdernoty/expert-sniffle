@@ -623,6 +623,7 @@ dependencies = [
  "anyhow",
  "dotenvy",
  "env_logger",
+ "hyper",
  "log",
  "teloxide",
  "tokio",
