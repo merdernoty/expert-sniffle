@@ -4,9 +4,11 @@ mod messages;
 
 use anyhow::Result;
 use env_logger::Env;
+use reqwest;
 use std::fs;
 use std::net::TcpListener;
 use std::path::PathBuf;
+use std::time::Duration;
 use teloxide::{dispatching::UpdateFilterExt, dptree, prelude::*};
 
 use crate::commands::Command;
@@ -44,16 +46,31 @@ async fn main() -> Result<()> {
         .unwrap_or(8000);
     log::info!("Requested health server port: {}", port);
 
+    let listener = TcpListener::bind(("0.0.0.0", port)).or_else(|err| {
+        log::warn!(
+            "Failed to bind port {}: {}. Trying ephemeral port.",
+            port,
+            err
+        );
+        TcpListener::bind(("0.0.0.0", 0))
+    })?;
+
+    let health_port = listener.local_addr()?.port();
+    log::info!("Health server bound on port {}", health_port);
+
     let bot_task = tokio::spawn(async move {
         dispatcher.dispatch().await;
         Ok::<(), anyhow::Error>(())
     });
 
-    let server_task = tokio::spawn(run_health_server(port));
+    let server_task = tokio::spawn(run_health_server(listener));
 
-    let (bot_res, server_res) = tokio::join!(bot_task, server_task);
+    let ping_task = tokio::spawn(run_ping_task(health_port));
+
+    let (bot_res, server_res, ping_res) = tokio::join!(bot_task, server_task, ping_task);
     bot_res??;
     server_res??;
+    ping_res??;
 
     Ok(())
 }
@@ -104,21 +121,9 @@ fn load_env_relaxed(path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn run_health_server(port: u16) -> Result<()> {
+async fn run_health_server(listener: TcpListener) -> Result<()> {
     use hyper::service::{make_service_fn, service_fn};
     use hyper::{Body, Request, Response, Server};
-
-    let listener = TcpListener::bind(("0.0.0.0", port)).or_else(|err| {
-        log::warn!(
-            "Failed to bind port {}: {}. Trying ephemeral port.",
-            port,
-            err
-        );
-        TcpListener::bind(("0.0.0.0", 0))
-    })?;
-
-    let local_port = listener.local_addr()?.port();
-    log::info!("Health server bound on port {}", local_port);
 
     let make_svc = make_service_fn(|_conn| async {
         Ok::<_, hyper::Error>(service_fn(|_req: Request<Body>| async move {
@@ -128,4 +133,29 @@ async fn run_health_server(port: u16) -> Result<()> {
 
     Server::from_tcp(listener)?.serve(make_svc).await?;
     Ok(())
+}
+
+async fn run_ping_task(health_port: u16) -> Result<()> {
+    let url =
+        std::env::var("PING_URL").unwrap_or_else(|_| format!("http://127.0.0.1:{health_port}/"));
+    let interval_secs = std::env::var("PING_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(20);
+
+    let client = reqwest::Client::new();
+    log::info!(
+        "Ping task enabled. URL: {}, interval: {}s",
+        url,
+        interval_secs
+    );
+
+    let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
+    loop {
+        ticker.tick().await;
+        let res = client.get(&url).send().await;
+        if let Err(err) = res {
+            log::warn!("Ping failed: {}", err);
+        }
+    }
 }
