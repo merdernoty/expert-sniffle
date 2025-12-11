@@ -23,7 +23,9 @@ pub const CHECK_FAILED_MESSAGE: &str = "\
 Не могу проверить подписку. Добавьте бота администратором каналов и попробуйте ещё раз.";
 
 pub fn guide_message() -> String {
-    env::var("GUIDE_MESSAGE").unwrap_or_else(|_| DEFAULT_GUIDE_MESSAGE.to_string())
+    env::var("GUIDE_MESSAGE")
+        .map(|val| val.replace("\\n", "\n"))
+        .unwrap_or_else(|_| DEFAULT_GUIDE_MESSAGE.to_string())
 }
 
 pub fn required_channels() -> Vec<String> {
